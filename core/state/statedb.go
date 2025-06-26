@@ -142,6 +142,9 @@ type StateDB struct {
 
 	// Testing hooks
 	onCommit func(states *triestate.Set) // Hook invoked when commit is performed
+
+	OnLog    func(log *types.Log)
+	OnCommit func(originRoot common.Hash, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, accountsOrigin map[common.Address][]byte, storages map[common.Hash]map[common.Hash][]byte, storagesOrigin map[common.Address]map[common.Hash][]byte, codes map[common.Hash][]byte)
 }
 
 // New creates a new state from a given trie.
@@ -217,6 +220,9 @@ func (s *StateDB) AddLog(log *types.Log) {
 	log.TxHash = s.thash
 	log.TxIndex = uint(s.txIndex)
 	log.Index = s.logSize
+	if s.OnLog != nil {
+		s.OnLog(log)
+	}
 	s.logs[s.thash] = append(s.logs[s.thash], log)
 	s.logSize++
 }
@@ -1179,6 +1185,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool, opts ...statecon
 	if err != nil {
 		return common.Hash{}, err
 	}
+	codes := make(map[common.Hash][]byte)
 	// Handle all state updates afterwards
 	for addr := range s.stateObjectsDirty {
 		obj := s.stateObjects[addr]
@@ -1188,6 +1195,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool, opts ...statecon
 		// Write any contract code associated with the state object
 		if obj.code != nil && obj.dirtyCode {
 			rawdb.WriteCode(codeWriter, common.BytesToHash(obj.CodeHash()), obj.code)
+			codes[common.BytesToHash(obj.CodeHash())] = obj.code
 			obj.dirtyCode = false
 		}
 		// Write any storage changes in the state object to its storage trie
@@ -1269,6 +1277,10 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool, opts ...statecon
 	origin := s.originalRoot
 	if origin == (common.Hash{}) {
 		origin = types.EmptyRootHash
+	}
+	destructs := s.convertAccountSet(s.stateObjectsDestruct)
+	if s.OnCommit != nil {
+		s.OnCommit(origin, root, destructs, s.accounts, nil, s.storages, nil, codes)
 	}
 	if root != origin {
 		start := time.Now()
