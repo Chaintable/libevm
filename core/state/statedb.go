@@ -1279,9 +1279,6 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool, opts ...statecon
 		origin = types.EmptyRootHash
 	}
 	destructs := s.convertAccountSet(s.stateObjectsDestruct)
-	if s.OnCommit != nil {
-		s.OnCommit(origin, root, destructs, s.accounts, nil, s.storages, nil, codes)
-	}
 	if root != origin {
 		start := time.Now()
 		set := triestate.New(s.accountsOrigin, s.storagesOrigin, incomplete)
@@ -1294,6 +1291,9 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool, opts ...statecon
 		}
 		if s.onCommit != nil {
 			s.onCommit(set)
+		}
+		if s.OnCommit != nil {
+			s.OnCommit(origin, root, destructs, s.accounts, nil, s.storages, nil, codes)
 		}
 	}
 	// Clear all internal flags at the end of commit operation.
