@@ -1149,6 +1149,28 @@ func (s *StateDB) handleDestruction(nodes *trienode.MergedNodeSet) (map[common.A
 	return incomplete, nil
 }
 
+func (s *StateDB) StateDiff(deleteEmptyObjects bool) (root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, codes map[common.Hash][]byte, err error) {
+	if s.dbErr != nil {
+		err = fmt.Errorf("state diff aborted due to earlier error: %v", s.dbErr)
+		return
+	}
+	root = s.IntermediateRoot(deleteEmptyObjects)
+	codes = make(map[common.Hash][]byte)
+	for addr := range s.stateObjectsDirty {
+		obj := s.stateObjects[addr]
+		if obj.deleted {
+			continue
+		}
+		if obj.code != nil && obj.dirtyCode {
+			codes[common.BytesToHash(obj.CodeHash())] = obj.code
+		}
+	}
+	destructs = s.convertAccountSet(s.stateObjectsDestruct)
+	accounts = s.accounts
+	storages = s.storages
+	return
+}
+
 // Commit writes the state to the underlying in-memory trie database.
 // Once the state is committed, tries cached in stateDB (including account
 // trie, storage tries) will no longer be functional. A new state instance
