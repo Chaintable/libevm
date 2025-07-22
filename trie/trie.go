@@ -49,6 +49,9 @@ type Trie struct {
 	// actually unhashed nodes.
 	unhashed int
 
+	// uncommitted is the number of updates since last commit.
+	uncommitted int
+
 	// reader is the handler trie can retrieve nodes from.
 	reader *trieReader
 
@@ -65,12 +68,13 @@ func (t *Trie) newFlag() nodeFlag {
 // Copy returns a copy of Trie.
 func (t *Trie) Copy() *Trie {
 	return &Trie{
-		root:      t.root,
-		owner:     t.owner,
-		committed: t.committed,
-		unhashed:  t.unhashed,
-		reader:    t.reader,
-		tracer:    t.tracer.copy(),
+		root:        t.root,
+		owner:       t.owner,
+		committed:   t.committed,
+		unhashed:    t.unhashed,
+		uncommitted: t.uncommitted,
+		reader:      t.reader,
+		tracer:      t.tracer.copy(),
 	}
 }
 
@@ -310,6 +314,7 @@ func (t *Trie) Update(key, value []byte) error {
 
 func (t *Trie) update(key, value []byte) error {
 	t.unhashed++
+	t.uncommitted++
 	k := keybytesToHex(key)
 	if len(value) != 0 {
 		_, n, err := t.insert(t.root, nil, k, valueNode(value))
@@ -423,6 +428,7 @@ func (t *Trie) Delete(key []byte) error {
 	if t.committed {
 		return ErrCommitted
 	}
+	t.uncommitted++
 	t.unhashed++
 	k := keybytesToHex(key)
 	_, n, err := t.delete(t.root, nil, k)
@@ -644,7 +650,8 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error) 
 	for _, path := range t.tracer.deletedNodes() {
 		nodes.AddNode([]byte(path), trienode.NewDeleted())
 	}
-	t.root = newCommitter(nodes, t.tracer, collectLeaf).Commit(t.root)
+	t.root = newCommitter(nodes, t.tracer, collectLeaf).Commit(t.root, t.uncommitted > 100)
+	t.uncommitted = 0
 	return rootHash, nodes, nil
 }
 
@@ -668,6 +675,7 @@ func (t *Trie) Reset() {
 	t.root = nil
 	t.owner = common.Hash{}
 	t.unhashed = 0
+	t.uncommitted = 0
 	t.tracer.reset()
 	t.committed = false
 }
