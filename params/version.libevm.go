@@ -1,4 +1,4 @@
-// Copyright 2024 the libevm authors.
+// Copyright 2024-2025 the libevm authors.
 //
 // The libevm additions to go-ethereum are free software: you can redistribute
 // them and/or modify them under the terms of the GNU Lesser General Public License
@@ -18,10 +18,10 @@ package params
 
 const (
 	LibEVMVersionMajor = 0
-	LibEVMVersionMinor = 2
+	LibEVMVersionMinor = 3
 	LibEVMVersionPatch = 0
 
-	LibEVMReleaseType      ReleaseType = ProductionRelease
+	LibEVMReleaseType      ReleaseType = BetaRelease
 	libEVMReleaseCandidate uint        = 0 // ignored unless [LibEVMReleaseType] == [ReleaseCandidate]
 )
 
@@ -48,7 +48,7 @@ const (
 // triplet.
 //
 // [semver v2]: https://semver.org/
-const LibEVMVersion = "1.13.14-0.2.0.release"
+const LibEVMVersion = "1.13.14-0.3.0.beta"
 
 // A ReleaseType is a suffix for [LibEVMVersion].
 type ReleaseType string
