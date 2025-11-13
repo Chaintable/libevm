@@ -364,10 +364,7 @@ func (st *StateTransition) preCheck() error {
 //
 // However if any consensus issue encountered, return the error directly with
 // nil evm execution result.
-func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
-	if err := st.canExecuteTransaction(); err != nil {
-		return nil, err
-	}
+func (st *StateTransition) transitionDb() (*ExecutionResult, error) {
 	// First check this message satisfies all consensus rules before
 	// applying the message. The rules include these clauses
 	//
@@ -477,6 +474,8 @@ func (st *StateTransition) refundGas(refundQuotient uint64) uint64 {
 		refund = st.state.GetRefund()
 	}
 	st.gasRemaining += refund
+
+	st.consumeMinimumGas() // libevm: see comment on method re call-site requirements
 
 	// Return ETH for remaining gas, exchanged at the original rate.
 	remaining := uint256.NewInt(st.gasRemaining)

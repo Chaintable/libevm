@@ -1,4 +1,4 @@
-// Copyright 2024 the libevm authors.
+// Copyright 2024-2025 the libevm authors.
 //
 // The libevm additions to go-ethereum are free software: you can redistribute
 // them and/or modify them under the terms of the GNU Lesser General Public License
@@ -30,6 +30,14 @@ import (
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 )
+
+// P256Verify is a [PrecompiledContract] implementation of P-256 (secp256r1)
+// ECDSA verification, as defined by [EIP-7951].
+//
+// [EIP-7951]: https://eips.ethereum.org/EIPS/eip-7951
+type P256Verify struct {
+	p256Verify
+}
 
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
 func ActivePrecompiles(rules params.Rules) []common.Address {
@@ -101,6 +109,12 @@ func (t CallType) isValid() bool {
 	}
 }
 
+// readOnly returns whether the CallType induces a read-only state if not
+// already in one.
+func (t CallType) readOnly() bool {
+	return t == StaticCall
+}
+
 // String returns a human-readable representation of the CallType.
 func (t CallType) String() string {
 	if t.isValid() {
@@ -120,15 +134,28 @@ func (t CallType) OpCode() OpCode {
 // run runs the [PrecompiledContract], differentiating between stateful and
 // regular types, updating `args.gasRemaining` in the stateful case.
 func (args *evmCallArgs) run(p PrecompiledContract, input []byte) (ret []byte, err error) {
-	switch p := p.(type) {
-	default:
+	sp, ok := p.(statefulPrecompile)
+	if !ok {
 		return p.Run(input)
-	case statefulPrecompile:
-		env := args.env()
-		ret, err := p(env, input)
-		args.gasRemaining = env.Gas()
-		return ret, err
 	}
+
+	env := args.env()
+	// Depth and read-only setting are handled by [EVMInterpreter.Run],
+	// which isn't used for precompiles, so we need to do it ourselves to
+	// maintain the expected invariants.
+	in := env.evm.interpreter
+
+	in.evm.depth++
+	defer func() { in.evm.depth-- }()
+
+	if env.callType.readOnly() && !in.readOnly {
+		in.readOnly = true
+		defer func() { in.readOnly = false }()
+	}
+
+	ret, err = sp(env, input)
+	args.gasRemaining = env.Gas()
+	return ret, err
 }
 
 // PrecompiledStatefulContract is the stateful equivalent of a
@@ -187,9 +214,17 @@ type PrecompileEnvironment interface {
 	BlockNumber() *big.Int
 	BlockTime() uint64
 
+	// Invalidate invalidates the transaction calling this precompile.
+	InvalidateExecution(error)
+
 	// Call is equivalent to [EVM.Call] except that the `caller` argument is
 	// removed and automatically determined according to the type of call that
 	// invoked the precompile.
+	//
+	// WARNING: using this method makes the precompile susceptible to reentrancy
+	// attacks as with a regular contract. The Checks-Effects-Interactions
+	// pattern, libevm's `reentrancy` package, or some other protection MUST be
+	// used in conjunction with `Call()`.
 	Call(addr common.Address, input []byte, gas uint64, value *uint256.Int, _ ...CallOption) (ret []byte, _ error)
 }
 
@@ -206,7 +241,7 @@ func (args *evmCallArgs) env() *environment {
 		self = args.addr
 
 	case DelegateCall:
-		value = nil
+		value = nil // inherited from `args.caller` inside [Contract.AsDelegate]
 		fallthrough
 	case CallCode:
 		self = args.caller.Address()
@@ -220,9 +255,11 @@ func (args *evmCallArgs) env() *environment {
 	}
 
 	return &environment{
-		evm:      args.evm,
-		self:     contract,
-		callType: args.callType,
+		evm:       args.evm,
+		self:      contract,
+		callType:  args.callType,
+		rawCaller: args.caller.Address(),
+		rawSelf:   args.addr,
 	}
 }
 

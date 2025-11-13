@@ -36,6 +36,8 @@ type environment struct {
 	evm      *EVM
 	self     *Contract
 	callType CallType
+
+	rawSelf, rawCaller common.Address
 }
 
 func (e *environment) Gas() uint64            { return e.self.Gas }
@@ -49,6 +51,8 @@ func (e *environment) IncomingCallType() CallType        { return e.callType }
 func (e *environment) BlockNumber() *big.Int             { return new(big.Int).Set(e.evm.Context.BlockNumber) }
 func (e *environment) BlockTime() uint64                 { return e.evm.Context.Time }
 
+func (e *environment) InvalidateExecution(err error) { e.evm.InvalidateExecution(err) }
+
 func (e *environment) refundGas(add uint64) error {
 	gas, overflow := math.SafeAdd(e.self.Gas, add)
 	if overflow {
@@ -59,26 +63,20 @@ func (e *environment) refundGas(add uint64) error {
 }
 
 func (e *environment) ReadOnly() bool {
-	// A switch statement provides clearer code coverage for difficult-to-test
-	// cases.
-	switch {
-	case e.callType == StaticCall:
-		// evm.interpreter.readOnly is only set to true via a call to
-		// EVMInterpreter.Run() so, if a precompile is called directly with
-		// StaticCall(), then readOnly might not be set yet.
-		return true
-	case e.evm.interpreter.readOnly:
-		return true
-	default:
-		return false
-	}
+	return e.evm.interpreter.readOnly
 }
 
 func (e *environment) Addresses() *libevm.AddressContext {
 	return &libevm.AddressContext{
 		Origin: e.evm.Origin,
-		Caller: e.self.CallerAddress,
-		Self:   e.self.Address(),
+		EVMSemantic: libevm.CallerAndSelf{
+			Caller: e.self.CallerAddress,
+			Self:   e.self.Address(),
+		},
+		Raw: &libevm.CallerAndSelf{
+			Caller: e.rawCaller,
+			Self:   e.rawSelf,
+		},
 	}
 }
 
@@ -106,19 +104,6 @@ func (e *environment) Call(addr common.Address, input []byte, gas uint64, value 
 }
 
 func (e *environment) callContract(typ CallType, addr common.Address, input []byte, gas uint64, value *uint256.Int, opts ...CallOption) (retData []byte, retErr error) {
-	// Depth and read-only setting are handled by [EVMInterpreter.Run], which
-	// isn't used for precompiles, so we need to do it ourselves to maintain the
-	// expected invariants.
-	in := e.evm.interpreter
-
-	in.evm.depth++
-	defer func() { in.evm.depth-- }()
-
-	if e.ReadOnly() && !in.readOnly { // i.e. the precompile was StaticCall()ed
-		in.readOnly = true
-		defer func() { in.readOnly = false }()
-	}
-
 	var caller ContractRef = e.self
 	if options.As[callConfig](opts...).unsafeCallerAddressProxying {
 		// Note that, in addition to being unsafe, this breaks an EVM
@@ -131,7 +116,7 @@ func (e *environment) callContract(typ CallType, addr common.Address, input []by
 		}
 	}
 
-	if in.readOnly && value != nil && !value.IsZero() {
+	if e.ReadOnly() && value != nil && !value.IsZero() {
 		return nil, ErrWriteProtection
 	}
 	if !e.UseGas(gas) {
